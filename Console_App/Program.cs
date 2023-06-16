@@ -14,11 +14,13 @@ namespace linkedin_App
     {
         static async Task Main(string[] args)
         {
+            // Load appsettings.json configuration
             var configuration = new ConfigurationBuilder()
                 .SetBasePath(Directory.GetCurrentDirectory())
                 .AddJsonFile("appsettings.json")
                 .Build();
 
+            string[] proxyIPAddresses = configuration.GetSection("ProxyIPAddresses").Get<string[]>();
             string connectionString = configuration.GetConnectionString("ServiceBusConnection")!;
             string receiveQueueName = configuration.GetValue<string>("ReceiveQueueName")!;
             string sendQueueName = configuration.GetValue<string>("SendQueueName")!;
@@ -34,16 +36,19 @@ namespace linkedin_App
             {
                 receivedMessages = (await receiver.ReceiveMessagesAsync(maxMessages: 100)).ToArray();
 
-                if (receivedMessages.Length > 0)
+                if (receivedMessages.Any())
                 {
                     foreach (ServiceBusReceivedMessage message in receivedMessages)
                     {
                         string linkedInProfileLink = message.Body.ToString();
                         string partitionKey = message.PartitionKey;
-
+                        var proxy = new Proxy();
+                        proxy.IsAutoDetect = false;
+                        proxy.HttpProxy = proxyIPAddresses[new Random().Next(0, proxyIPAddresses.Length)];
                         ChromeOptions options = new ChromeOptions();
                         options.AddArgument("--headless");
-
+                        options.Proxy = proxy;
+                        //options.AddArgument("--proxy-server=" + proxy);
                         using (IWebDriver driver = new ChromeDriver(options))
                         {
                             Login(driver, username, password);
@@ -58,21 +63,20 @@ namespace linkedin_App
                             responseMessage.PartitionKey = partitionKey;
                             await sender.SendMessageAsync(responseMessage);
                         }
-
-                        // Complete the message to remove it from the queue
-                        await receiver.CompleteMessageAsync(message);
                     }
                 }
                 else
                 {
                     // Wait for a short duration before checking for new messages again
-                    await Task.Delay(2000);
+                    await Task.Delay(1000);
                 }
             }
         }
 
+
         static void Login(IWebDriver driver, string username, string password)
         {
+
             driver.Navigate().GoToUrl("https://www.linkedin.com/login");
             driver.FindElement(By.Id("username")).SendKeys(username);
             driver.FindElement(By.Id("password")).SendKeys(password);
@@ -83,9 +87,7 @@ namespace linkedin_App
         {
             driver.Navigate().GoToUrl(linkedInProfileLink);
             await Task.Delay(2000);
-
             ProfileData profileData = new ProfileData();
-
             profileData.ProfilePicUrl = FindProfilePictureUrl(driver);
             profileData.BackgroundCoverImageUrl = FindBackgroundCoverImageUrl(driver);
             profileData.FullName = FindElementText(driver, By.CssSelector(".text-heading-xlarge.inline.t-24.v-align-middle.break-words"));
@@ -109,7 +111,7 @@ namespace linkedin_App
             catch (NoSuchElementException)
             {
                 Console.WriteLine("Profile picture not found.");
-                return null;
+                return null!;
             }
         }
 
@@ -123,7 +125,7 @@ namespace linkedin_App
             catch (NoSuchElementException)
             {
                 Console.WriteLine("Background cover image not found.");
-                return null;
+                return null!;
             }
         }
 
@@ -137,7 +139,7 @@ namespace linkedin_App
             catch (NoSuchElementException)
             {
                 Console.WriteLine("Element not found: " + locator.ToString());
-                return null;
+                return null!;
             }
         }
     }
